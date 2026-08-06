@@ -1,0 +1,44 @@
+THE TRACK RECORD — what it is and how to turn it on
+
+A backtest is a claim about the past that the person making it also chose how
+to compute. Everyone entering has one. This is the other thing: forecasts
+written down BEFORE the window they describe, settled afterwards from the
+exchange's own public feed, with every row kept so anyone can recompute the
+score and get the same answer.
+
+Three rules are enforced by the database, not by good intentions. A forecast
+can only be written before its window opens. A forecast can only be written
+once per symbol and window. An outcome can only be settled once. Nothing can
+revise a prediction after the fact.
+
+
+STEP 1. Cron it on the window boundary, every 15 minutes.
+
+  */15 * * * * cd /opt/caliper && NODE_NO_WARNINGS=1 LIQ_DB=/opt/agentfeed/liquidations.db RECORD_DB=/opt/caliper/record.db CALIPER_MODEL=/opt/caliper/model.json /usr/bin/flock -n /var/lock/caliper-record.lock /usr/bin/node bin/record.mjs >>/opt/caliper/record.log 2>&1
+
+Widen coverage any time by adding SYMBOLS=SOL,BTC,ETH,XRP,DOGE,... to that line.
+It costs rows and nothing else. Default is the five majors.
+
+
+STEP 2. Add the free tool to /opt/agentfeed/mcp.js.
+
+Extend the existing require to include the new export:
+
+const { getCascadeForecast, getCascadeForecastFree, getForecastQuestion, getForecastRecord } = require('./tools/cascade-forecast');
+
+Then add this entry beside the other forecast tools:
+
+  { name: 'get_forecast_record', usd: 0, desc: 'FREE: the live track record of this miner. Every forecast was written down BEFORE its 15-minute window opened and settled afterwards from the exchange public feed, and the raw rows are returned alongside the score so you can recompute it yourself rather than take it on trust. Returns settled count, base rate, Brier skill against climatology, coverage, calibration error and a reliability curve. A backtest is a claim about the past that its author also chose how to compute; this is not that.',
+    schema: { symbol: z.string().optional().describe('restrict the record to one symbol'),
+              rows: z.number().optional().describe('how many raw rows to return, max 500, default 50') },
+    run: (a) => getForecastRecord({ query: a }) },
+
+
+STEP 3. Reinstall the adapter and restart.
+
+  cp /opt/caliper/cascade-forecast.cjs /opt/agentfeed/tools/cascade-forecast.js
+  cd /opt/agentfeed && pm2 delete agentfeed && NODE_NO_WARNINGS=1 pm2 start server.js --name agentfeed && pm2 save
+
+
+STEP 4. Add it to the watchdog once rows exist, so a silent stop is visible.
+The failure that matters is the record going stale while everything looks fine.

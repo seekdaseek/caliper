@@ -1,0 +1,33 @@
+STEP 1. Install the adapter as CommonJS. AgentFeed has no "type" field in its
+package.json, so a .js file there is CommonJS and the extension must change:
+
+    cp /opt/caliper/cascade-forecast.cjs /opt/agentfeed/tools/cascade-forecast.js
+
+STEP 2. Add the require near the other tool requires at the top of mcp.js,
+alongside the getCascadeAlert line:
+
+const { getCascadeForecast, getCascadeForecastFree, getForecastQuestion } = require('./tools/cascade-forecast');
+
+STEP 3. Add these three entries to the tools array, next to get_cascade_scan.
+
+
+  { name: 'get_cascade_forecast', usd: 0.02, desc: 'FORWARD-LOOKING liquidation forecast, not a description of what already happened. Returns the probability that a symbol will liquidate more in the NEXT 15 minutes than its own 90th-percentile 15-minute window. Calibrated on a 28-day tape of 1.4M Bybit liquidations across 799 symbols, which cannot be reconstructed by anyone starting today because no exchange publishes liquidation history. Every answer carries the exact question, the threshold in USD, the window it read, the number of historical occurrences behind the number, and instructions for settling it yourself from the public feed. When a state has too little history the tool DECLINES rather than guessing, and says why.',
+    schema: { symbol: z.string().optional().describe('SOL, BTC, ETH or any USDT perp e.g. SXTUSDT (default SOL)'),
+              symbols: z.string().optional().describe('comma separated for a batch, max 20, e.g. SOL,BTC,ETH') },
+    run: (a) => getCascadeForecast({ query: a }) },
+
+  { name: 'get_cascade_forecast_free', usd: 0, desc: 'FREE taster: the full-quality liquidation forecast for SOL, no delay and nothing withheld. Use it to check the calibration before paying for coverage of the other ~345 symbols.',
+    schema: {}, run: () => getCascadeForecastFree() },
+
+  { name: 'get_forecast_question', usd: 0, desc: 'FREE: the exact question the forecast answers, machine readable, plus how to settle it yourself from the public exchange feed and the full list of covered symbols. Read this before building on the forecast.',
+    schema: {}, run: () => getForecastQuestion() },
+
+
+STEP 4. Restart. Never pm2 restart for a dotenv app:
+
+    cd /opt/agentfeed && pm2 delete agentfeed && pm2 start server.js --name agentfeed && pm2 save
+
+STEP 5. Refit on a schedule. The model takes under four seconds and the tape
+only gets longer:
+
+    0 */6 * * * cd /opt/caliper && NODE_NO_WARNINGS=1 /usr/bin/flock -n /var/lock/caliper-fit.lock /usr/bin/node bin/fit.mjs >/dev/null 2>>/opt/caliper/fit.log
